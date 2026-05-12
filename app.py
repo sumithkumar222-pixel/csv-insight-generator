@@ -56,7 +56,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>📊 CSV Insight Generator</h1>
-    <p>Drop a CSV file. Get instant AI-powered insights.</p>
+    <p>Drop a CSV or Excel file. Get instant AI-powered insights.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -66,8 +66,7 @@ MAX_ROWS_FOR_ANALYSIS = 10000
 
 
 def load_csv_safely(uploaded_file):
-    """Try multiple encodings to read the CSV. Returns DataFrame or raises clear error."""
-    encodings = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
+    """Read CSV or Excel file. Returns DataFrame or raises clear error."""
     
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > MAX_FILE_SIZE_MB:
@@ -75,6 +74,25 @@ def load_csv_safely(uploaded_file):
             f"File is too large ({file_size_mb:.1f} MB). "
             f"Please upload files under {MAX_FILE_SIZE_MB} MB."
         )
+    
+    file_name = uploaded_file.name.lower()
+    
+    if file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+        try:
+            uploaded_file.seek(0)
+            df = pd.read_excel(uploaded_file, engine="openpyxl" if file_name.endswith(".xlsx") else None)
+            if df.empty:
+                raise ValueError("This Excel file is empty. Please upload a file with data.")
+            return df
+        except ValueError as e:
+            raise e
+        except Exception as e:
+            raise ValueError(
+                f"Could not read this Excel file. Error: {str(e)[:150]}. "
+                f"Try saving it as a new .xlsx file in Excel first."
+            )
+    
+    encodings = ["utf-8", "latin-1", "cp1252", "iso-8859-1"]
     
     for encoding in encodings:
         try:
@@ -91,7 +109,6 @@ def load_csv_safely(uploaded_file):
     raise ValueError(
         "Could not read this file. Try saving it as UTF-8 in Excel or Google Sheets first."
     )
-
 
 def validate_dataframe(df):
     """Check that the DataFrame is usable for analysis."""
@@ -137,9 +154,9 @@ def sample_if_large(df):
 
 
 uploaded_file = st.file_uploader(
-    "Upload your CSV file",
-    type=["csv"],
-    help=f"Drag and drop a CSV file (max {MAX_FILE_SIZE_MB} MB)"
+    "Upload your CSV or Excel file",
+    type=["csv", "xlsx", "xls"],
+    help=f"Drag and drop a CSV or Excel file (max {MAX_FILE_SIZE_MB} MB)"
 )
 
 if uploaded_file is None and not st.session_state.get("use_sample"):
