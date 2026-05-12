@@ -110,6 +110,50 @@ Columns:
         return []
 
 
+def suggest_followup_questions(profile: dict, findings: dict, summary: str) -> list:
+    """Ask Claude to suggest 3 follow-up questions a business user should ask next."""
+    
+    context = json.dumps({
+        "profile": profile,
+        "findings": findings,
+        "summary": summary
+    }, indent=2)
+    
+    prompt = f"""You are a senior data analyst. Below is a summary of a dataset that was just analyzed. Suggest 3 specific follow-up questions a business user should ask to dig deeper into this data.
+
+Rules for good questions:
+- Each question must be specific to the actual data (mention real column names, time periods, or categories from the dataset)
+- Each question should reveal a different angle (e.g., one about trends, one about segments, one about anomalies)
+- Questions must be answerable from the data the user has
+- Phrase them as a curious analyst would ask them, not as generic templates
+
+Return your answer as a JSON array of 3 strings, no other text.
+
+Example format:
+["Why did revenue drop in March compared to February?", "Which product category has the highest profit margin?", "Are returns concentrated in a specific region?"]
+
+Data context:
+{context}"""
+
+    message = client.messages.create(
+        model="claude-opus-4-5",
+        max_tokens=500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    text = message.content[0].text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return []
+
+
 if __name__ == "__main__":
     from profiler import profile_dataframe
     from detector import detect_all
@@ -152,3 +196,10 @@ if __name__ == "__main__":
     print("="*60)
     charts = suggest_charts(profile)
     print(json.dumps(charts, indent=2))
+    
+    print("\n" + "="*60)
+    print("SUGGESTED FOLLOW-UP QUESTIONS (from Claude)")
+    print("="*60)
+    questions = suggest_followup_questions(profile, findings, summary)
+    for i, q in enumerate(questions, 1):
+        print(f"{i}. {q}")

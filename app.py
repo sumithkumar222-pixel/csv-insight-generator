@@ -5,7 +5,8 @@ import json
 
 from profiler import profile_dataframe
 from detector import detect_all
-from ai import generate_executive_summary, explain_findings, suggest_charts
+from ai import generate_executive_summary, explain_findings, suggest_charts, suggest_followup_questions
+from query_engine import answer_question
 
 st.set_page_config(
     page_title="CSV Insight Generator",
@@ -56,7 +57,7 @@ st.markdown("""
 st.markdown("""
 <div class="main-header">
     <h1>📊 CSV Insight Generator</h1>
-    <p>Drop a CSV or Excel file. Get instant AI-powered insights.</p>
+    <p>Drop a CSV or Excel file. Get AI-powered insights and chat with your data.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -110,17 +111,18 @@ def load_csv_safely(uploaded_file):
         "Could not read this file. Try saving it as UTF-8 in Excel or Google Sheets first."
     )
 
+
 def validate_dataframe(df):
     """Check that the DataFrame is usable for analysis."""
     if df.empty:
-        raise ValueError("This CSV has no rows. Please upload a file with data.")
+        raise ValueError("This file has no rows. Please upload a file with data.")
     
     if len(df.columns) == 0:
-        raise ValueError("This CSV has no columns. Please check the file format.")
+        raise ValueError("This file has no columns. Please check the file format.")
     
     if len(df.columns) == 1:
         st.warning(
-            "⚠️ Your CSV only has 1 column. Insights will be limited. "
+            "⚠️ Your file only has 1 column. Insights will be limited. "
             "Try a file with more columns for richer analysis."
         )
     
@@ -153,6 +155,53 @@ def sample_if_large(df):
     return df
 
 
+def render_chat_chart(result, chart_type, question):
+    """Render a chart from a question's result if appropriate."""
+    if chart_type == "none" or chart_type == "table":
+        return None
+    
+    try:
+        if isinstance(result, pd.Series):
+            df_chart = result.reset_index()
+            df_chart.columns = [str(df_chart.columns[0]), "value"]
+            x_col = df_chart.columns[0]
+            y_col = "value"
+        elif isinstance(result, pd.DataFrame):
+            if result.shape[1] < 2:
+                return None
+            df_chart = result.reset_index() if result.index.name else result.copy()
+            x_col = df_chart.columns[0]
+            y_col = df_chart.columns[1]
+        else:
+            return None
+        
+        if chart_type == "bar":
+            fig = px.bar(df_chart.head(20), x=x_col, y=y_col, title=question[:80])
+        elif chart_type == "line":
+            fig = px.line(df_chart.head(100), x=x_col, y=y_col, title=question[:80])
+        elif chart_type == "scatter":
+            fig = px.scatter(df_chart.head(200), x=x_col, y=y_col, title=question[:80])
+        elif chart_type == "pie":
+            fig = px.pie(df_chart.head(10), names=x_col, values=y_col, title=question[:80])
+        else:
+            return None
+        
+        fig.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=350)
+        return fig
+    except Exception:
+        return None
+
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+if "df" not in st.session_state:
+    st.session_state.df = None
+
+if "analysis_complete" not in st.session_state:
+    st.session_state.analysis_complete = False
+
+
 uploaded_file = st.file_uploader(
     "Upload your CSV or Excel file",
     type=["csv", "xlsx", "xls"],
@@ -160,10 +209,12 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file is None and not st.session_state.get("use_sample"):
-    st.info("👆 Upload any CSV file to see automatic insights, anomaly detection, and chart suggestions powered by AI.")
+    st.info("👆 Upload any CSV or Excel file to see automatic insights and chat with your data.")
     st.markdown("**Try with sample data:**")
     if st.button("📥 Use sample sales data"):
         st.session_state["use_sample"] = True
+        st.session_state.messages = []
+        st.session_state.analysis_complete = False
         st.rerun()
 
 if uploaded_file is not None or st.session_state.get("use_sample"):
@@ -191,27 +242,50 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
         df = auto_detect_dates(df)
         df = sample_if_large(df)
         
+        st.session_state.df = df
+        
         st.success(f"✅ Loaded **{file_label}** — {df.shape[0]:,} rows × {df.shape[1]} columns")
         
-        with st.spinner("Analyzing your data..."):
-            profile = profile_dataframe(df)
-            findings = detect_all(df)
+        if not st.session_state.analysis_complete:
+            with st.spinner("Analyzing your data..."):
+                profile = profile_dataframe(df)
+                findings = detect_all(df)
+            
+            with st.spinner("Generating AI insights (this takes ~30 seconds)..."):
+                try:
+                    summary = generate_executive_summary(profile, findings)
+                except Exception as e:
+                    summary = f"Could not generate summary. Error: {str(e)[:200]}"
+                
+                try:
+                    explanations = explain_findings(findings)
+                except Exception:
+                    explanations = []
+                
+                try:
+                    chart_suggestions = suggest_charts(profile)
+                except Exception:
+                    chart_suggestions = []
+                
+                try:
+                    followup_questions = suggest_followup_questions(profile, findings, summary)
+                except Exception:
+                    followup_questions = []
+            
+            st.session_state.profile = profile
+            st.session_state.findings = findings
+            st.session_state.summary = summary
+            st.session_state.explanations = explanations
+            st.session_state.chart_suggestions = chart_suggestions
+            st.session_state.followup_questions = followup_questions
+            st.session_state.analysis_complete = True
         
-        with st.spinner("Generating AI insights (this takes ~20 seconds)..."):
-            try:
-                summary = generate_executive_summary(profile, findings)
-            except Exception as e:
-                summary = f"Could not generate summary. Error: {str(e)[:200]}"
-            
-            try:
-                explanations = explain_findings(findings)
-            except Exception:
-                explanations = []
-            
-            try:
-                chart_suggestions = suggest_charts(profile)
-            except Exception:
-                chart_suggestions = []
+        profile = st.session_state.profile
+        findings = st.session_state.findings
+        summary = st.session_state.summary
+        explanations = st.session_state.explanations
+        chart_suggestions = st.session_state.chart_suggestions
+        followup_questions = st.session_state.followup_questions
         
         st.markdown("### 📝 Executive summary")
         st.markdown(f'<div class="insight-box">{summary}</div>', unsafe_allow_html=True)
@@ -281,6 +355,70 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
                 except Exception as e:
                     st.warning(f"Could not render chart '{chart.get('title', 'Untitled')}': {str(e)[:100]}")
         
+        st.markdown("---")
+        st.markdown("### 💬 Chat with your data")
+        st.markdown("_Ask any question about your dataset. The AI will analyze and answer with charts and explanations._")
+        
+        if not st.session_state.messages and followup_questions:
+            st.markdown("**Suggested questions to get you started:**")
+            cols = st.columns(min(len(followup_questions), 3))
+            for i, q in enumerate(followup_questions[:3]):
+                if cols[i].button(f"💡 {q[:60]}{'...' if len(q) > 60 else ''}", key=f"suggested_{i}", use_container_width=True):
+                    st.session_state.messages.append({"role": "user", "content": q})
+                    st.rerun()
+        
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+                if "chart" in message and message["chart"] is not None:
+                    st.plotly_chart(message["chart"], use_container_width=True, key=f"chart_{id(message)}")
+                if "code" in message and message["code"]:
+                    with st.expander("🔧 View the analysis code"):
+                        st.code(message["code"], language="python")
+        
+        if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
+            last_question = st.session_state.messages[-1]["content"]
+            with st.chat_message("assistant"):
+                with st.spinner("Analyzing your data..."):
+                    try:
+                        result = answer_question(
+                            last_question, 
+                            df, 
+                            profile, 
+                            conversation_history=st.session_state.messages[:-1]
+                        )
+                        answer_text = result["answer"]
+                        chart = render_chat_chart(result.get("result"), result.get("chart_type", "none"), last_question)
+                        code = result.get("code", "")
+                    except Exception as e:
+                        answer_text = f"❌ Sorry, I ran into an error: {str(e)[:200]}"
+                        chart = None
+                        code = ""
+                
+                st.markdown(answer_text)
+                if chart is not None:
+                    st.plotly_chart(chart, use_container_width=True, key=f"new_chart_{len(st.session_state.messages)}")
+                if code:
+                    with st.expander("🔧 View the analysis code"):
+                        st.code(code, language="python")
+            
+            new_message = {"role": "assistant", "content": answer_text}
+            if chart is not None:
+                new_message["chart"] = chart
+            if code:
+                new_message["code"] = code
+            st.session_state.messages.append(new_message)
+            st.rerun()
+        
+        if prompt := st.chat_input("Ask anything about your data..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.rerun()
+        
+        if st.session_state.messages:
+            if st.button("🗑️ Clear conversation"):
+                st.session_state.messages = []
+                st.rerun()
+        
         with st.expander("🔧 View raw data profile (for technical users)"):
             st.json(profile)
         
@@ -289,11 +427,11 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
     
     except ValueError as e:
         st.error(f"❌ {str(e)}")
-        st.info("Try a different CSV file, or click 'Use sample sales data' to see how the tool works.")
+        st.info("Try a different file, or click 'Use sample sales data' to see how the tool works.")
     
     except Exception as e:
         st.error(f"❌ Something unexpected went wrong: {str(e)[:200]}")
-        st.info("Please try a different CSV file. If the problem continues, the file may be corrupted.")
+        st.info("Please try a different file. If the problem continues, the file may be corrupted.")
 
 st.markdown("""
 <div class="footer">
