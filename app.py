@@ -7,6 +7,7 @@ from profiler import profile_dataframe
 from detector import detect_all
 from ai import generate_executive_summary, explain_findings, suggest_charts, suggest_followup_questions
 from query_engine import answer_question
+from pdf_generator import generate_pdf_report
 
 st.set_page_config(
     page_title="CSV Insight Generator",
@@ -280,6 +281,7 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
             st.session_state.explanations = explanations
             st.session_state.chart_suggestions = chart_suggestions
             st.session_state.followup_questions = followup_questions
+            st.session_state.file_label = file_label
             st.session_state.analysis_complete = True
         
         profile = st.session_state.profile
@@ -288,8 +290,33 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
         explanations = st.session_state.explanations
         chart_suggestions = st.session_state.chart_suggestions
         followup_questions = st.session_state.followup_questions
+        file_label = st.session_state.file_label
         
-        st.markdown("### 📝 Executive summary")
+        col_summary, col_download = st.columns([3, 1])
+        with col_summary:
+            st.markdown("### 📝 Executive summary")
+        with col_download:
+            try:
+                pdf_bytes = generate_pdf_report(
+                    file_label=file_label,
+                    df_rows=df.shape[0],
+                    df_cols=df.shape[1],
+                    summary=summary,
+                    explanations=explanations,
+                    profile=profile,
+                    chart_suggestions=chart_suggestions,
+                    followup_questions=followup_questions,
+                )
+                st.download_button(
+                    label="📄 Download PDF Report",
+                    data=pdf_bytes,
+                    file_name=f"insight_report_{file_label.split('.')[0]}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.warning(f"PDF temporarily unavailable: {str(e)[:80]}")
+        
         st.markdown(f'<div class="insight-box">{summary}</div>', unsafe_allow_html=True)
         
         st.markdown("### 📐 Key metrics")
