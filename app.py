@@ -64,6 +64,8 @@ st.markdown("""
 
 MAX_FILE_SIZE_MB = 50
 MAX_ROWS_FOR_ANALYSIS = 10000
+MAX_CONVERSATION_MESSAGES = 12
+CONTEXT_WINDOW = 6
 
 
 def load_csv_safely(uploaded_file):
@@ -381,11 +383,12 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
             with st.chat_message("assistant"):
                 with st.spinner("Analyzing your data..."):
                     try:
+                        recent_context = st.session_state.messages[-(CONTEXT_WINDOW + 1):-1]
                         result = answer_question(
-                            last_question, 
-                            df, 
-                            profile, 
-                            conversation_history=st.session_state.messages[:-1]
+                            last_question,
+                            df,
+                            profile,
+                            conversation_history=recent_context
                         )
                         answer_text = result["answer"]
                         chart = render_chat_chart(result.get("result"), result.get("chart_type", "none"), last_question)
@@ -408,11 +411,21 @@ if uploaded_file is not None or st.session_state.get("use_sample"):
             if code:
                 new_message["code"] = code
             st.session_state.messages.append(new_message)
+            
+            if len(st.session_state.messages) > MAX_CONVERSATION_MESSAGES:
+                st.session_state.messages = st.session_state.messages[-MAX_CONVERSATION_MESSAGES:]
+            
             st.rerun()
         
         if prompt := st.chat_input("Ask anything about your data..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            st.rerun()
+            cleaned_prompt = prompt.strip()
+            if not cleaned_prompt:
+                st.warning("Please enter a question.")
+            elif len(cleaned_prompt) < 3:
+                st.warning("Please enter a more detailed question.")
+            else:
+                st.session_state.messages.append({"role": "user", "content": cleaned_prompt})
+                st.rerun()
         
         if st.session_state.messages:
             if st.button("🗑️ Clear conversation"):

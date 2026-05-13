@@ -88,7 +88,7 @@ Respond with a JSON object exactly like this (no markdown, no extra text):
 }}"""
 
     message = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-5",
         max_tokens=1500,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -159,7 +159,7 @@ The result was:Write a 2-4 sentence answer that:
 Respond with only the answer, no preamble."""
 
     message = client.messages.create(
-        model="claude-opus-4-5",
+        model="claude-sonnet-4-5",
         max_tokens=500,
         messages=[{"role": "user", "content": prompt}]
     )
